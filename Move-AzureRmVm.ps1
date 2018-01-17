@@ -12,13 +12,16 @@ else {
 function Copy-AzureRmManagedDisk {
     Param(
         [Parameter(Mandatory = $true)]
-        [Microsoft.Azure.Commands.Compute.Automation.Models.PSDisk]$ManagedDisk,
+        [Microsoft.Azure.Commands.Compute.Automation.Models.PSDisk]
+        $ManagedDisk,
 
         [Parameter(Mandatory = $true)]
-        [Microsoft.Azure.Commands.Management.Storage.Models.PSStorageAccount]$TargetAccount,
+        [Microsoft.Azure.Commands.Management.Storage.Models.PSStorageAccount]
+        $TargetAccount,
 
         [Parameter(Mandatory = $false)]
-        [string]$containerName = 'migrationvhds'
+        [string]
+        $containerName = 'migrationvhds'
     )
     $InitialContext = Get-AzureRmContext
     $diskToken = Grant-AzureRmDiskAccess -ResourceGroupName $managedDisk.ResourceGroupName -DiskName $managedDisk.Name -Access Read -DurationInSecond (60 * 60 * 12)
@@ -35,6 +38,74 @@ function Copy-AzureRmManagedDisk {
     Set-AzureRmContext -Context $InitialContext | Out-Null
 
     Write-Output $blob
+}
+
+function Copy-AzureRmUnmanagedDisk {
+    Param(
+        # Source Storage Account
+        [Parameter(Mandatory = $true)]
+        [Microsoft.Azure.Commands.Management.Storage.Models.PSStorageAccount]
+        $SourceAccount,
+
+        # Source VHD Uri
+        [Parameter(Mandatory = $true)]
+        [string]
+        $SourceBlobUri,
+
+        # Target Storage Account
+        [Parameter(Mandatory = $true)]
+        [Microsoft.Azure.Commands.Management.Storage.Models.PSStorageAccount]
+        $TargetAccount
+    )
+
+    $InitialContext = Get-AzureRmContext
+
+    Set-AzureRmContext -SubscriptionId $targetAccount.Id.Split('/')[2] | Out-Null
+
+    Set-AzureRmContext -Context $InitialContext | Out-Null
+    $storageAccountKey = Get-AzureRmStorageAccountKey -ResourceGroupName $targetAccount.ResourceGroupName -Name $targetAccount.StorageAccountName
+    $storageContext = New-AzureStorageContext -StorageAccountName $targetAccount.StorageAccountName -StorageAccountKey $storageAccountKey.Value[0]
+    $container = Get-AzureStorageContainer $containerName -Context $storageContext -ErrorAction Ignore
+    if ($container -eq $null) {
+        $container = New-AzureStorageContainer $containerName -Context $storageContext
+    }
+}
+
+function Get-AzureRmStorageAccountFromUri {
+    Param(
+        # Blob Uri
+        [Parameter(ValueFromPipeline = $true)]
+        [string]
+        $BlobUri,
+
+        # Whether to search for accounts in all subscriptions
+        [Parameter(Mandatory = $false)]
+        [switch]
+        $SearchAllSubscriptions
+    )
+    Begin {
+        $InitialContext = Get-AzureRmContext
+        if ($SearchAllSubscriptions) {
+            $subscriptions = Get-AzureRmSubscription
+        }
+        else {
+            $subscriptions = @((Get-AzureRmContext).Subscription)
+        }
+    }
+
+    Process {
+        $accountName = ([System.Uri]$BlobUri).Host.Split('.')[0]
+        
+        foreach ($subscription in $subscriptions) {
+            Set-AzureRmContext -SubscriptionId $subscription.Id | Out-Null
+            $account = Get-AzureRmStorageAccount | Where-Object { $_.StorageAccountName.toLower() -eq $accountName.ToLower() }
+        }
+    }
+
+    end {
+        Set-AzureRmContext -Context $InitialContext | Out-Null
+        Write-Output $account
+    }
 }
 
 function Move-AzureRmVm {
@@ -54,13 +125,16 @@ function Move-AzureRmVm {
     #>
     Param(
         [Parameter(Mandatory = $true)]
-        [string]$TargetSubscriptionId,
+        [string]
+        $TargetSubscriptionId,
 
         [Parameter(Mandatory = $true)]
-        [string]$TargetResourceGroupName,
+        [string]
+        $TargetResourceGroupName,
 
         [Parameter(ValueFromPipeline = $true)]
-        [Microsoft.Azure.Commands.Compute.Models.PSVirtualMachine[]]$Vm
+        [Microsoft.Azure.Commands.Compute.Models.PSVirtualMachine[]]
+        $Vm
     )
 
     Begin {
@@ -111,7 +185,10 @@ function Move-AzureRmVm {
             $copyJobs += $osBlob
         }
         else {
-
+            $osDiskUri = $Vm.StorageProfile.OsDisk.Vhd.Uri
+            $osDiskAccount = Get-AzureRmStorageAccountFromUri -BlobUri $osDiskUri
+            $osBlob = Copy-AzureRmUnmanagedDisk -SourceAccount $osDiskAccount -SourceBlobUri $osDiskUri -TargetAccount $targetAccount
+            $copyJobs += $osBlob
         }
 
         # Copy data disks to new subscription
@@ -122,7 +199,10 @@ function Move-AzureRmVm {
                 $copyJobs += $blob
             }
             else {
-                
+                $diskUri = $dataDisk.Vhd.Uri
+                $diskAccount = Get-AzureRmStorageAccountFromUri -BlobUri $diskUri
+                $diskBlob = Copy-AzureRmUnmanagedDisk -SourceAccount $diskAccount -SourceBlobUri $diskUri -TargetAccount $targetAccount
+                $copyJobs += $diskBlob
             }
         }
 
