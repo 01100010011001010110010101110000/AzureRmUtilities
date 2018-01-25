@@ -117,7 +117,7 @@ function Move-AzureRmVm {
         .SYNTAX
         .NOTES
             VERSION: 0.0.1
-            AUTHOR: Tyler Gregory <tyler.gregory@dvn.com>
+            AUTHOR: Tyler Gregory <tdgregory@protonmail.com>
 
         .PARAMETER
         .INPUTS
