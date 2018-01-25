@@ -169,7 +169,7 @@ function Move-AzureRmVm {
         Stop-AzureRmVM -Name $Vm.Name -ResourceGroupName $Vm.ResourceGroupName -Confirm:$false
 
         Set-AzureRmContext -SubscriptionId $targetSubscription.Id
-        $targetAccount = Get-AzureRmStorageAccount | Where-Object { $_.Location -eq $Vm.Location } | Select-Object -Last 1
+        $targetAccount = Get-AzureRmStorageAccount | Where-Object { $_.Location -eq $Vm.Location } | Out-GridView -Title 'Select target storage account' -OutputMode Single
         if ($targetAccount -eq $null) {
             Write-Error "Error copying $($Vm.Name): No storage account in $($Vm.Location)"
             return
@@ -229,7 +229,9 @@ function Move-AzureRmVm {
         }
     
         $targetNetwork = Get-AzureRmVirtualNetwork | Where-Object { $_.Location -eq $Vm.Location -and $_.Name.ToLower() -like 'vn_prod*' }
-        $newNicIpConfig = New-AzureRmNetworkInterfaceIpConfig -Name "$($newVm.Name)-ipConfig" -Subnet $targetNetwork.Subnets[4]
+        $targetSubnet = $targetNetwork.Subnets | Out-GridView -Title 'Select the desired subnet' -OutputMode Single
+
+        $newNicIpConfig = New-AzureRmNetworkInterfaceIpConfig -Name "$($newVm.Name)-ipConfig" -Subnet $targetSubnet
         $newNic = New-AzureRmNetworkInterface -Name "$($newVm.Name)-nic0" -ResourceGroupName $TargetResourceGroupName -IpConfiguration $newNicIpConfig -Location $Vm.Location
 
         $osDiskConfig = New-AzureRmDiskConfig -CreateOption Import `
