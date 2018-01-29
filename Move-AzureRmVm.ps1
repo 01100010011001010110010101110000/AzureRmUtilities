@@ -229,7 +229,7 @@ function Move-AzureRmVm {
             Default { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags }
         }
     
-        $targetNetwork = Get-AzureRmVirtualNetwork | Where-Object { $_.Location -eq $Vm.Location -and $_.Name.ToLower() -like 'vn_prod*' }
+        $targetNetwork = Get-AzureRmVirtualNetwork | Where-Object { $_.Location -eq $Vm.Location }
         $targetSubnet = $targetNetwork.Subnets | Out-GridView -Title 'Select the desired subnet' -OutputMode Single
 
         $newNicIpConfig = New-AzureRmNetworkInterfaceIpConfig -Name "$($newVm.Name)-ipConfig" -Subnet $targetSubnet
