@@ -222,6 +222,7 @@ function Move-AzureRmVm {
         }
 
         Set-AzureRmContext -SubscriptionId $targetSubscription.Id
+        $diskSku = if ($Vm.HardwareProfile.VmSize -match "standard_[a-z]s\d+|[a-z]\d+s.*") { 'PremiumLRS' } Else { 'StandardLRS' }
         switch ($vm.StorageProfile.OsDisk.OsType) {
             'Linux' { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags }
             'Windows' { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -LicenseType Windows_Server -Tags $Vm.Tags }
@@ -235,7 +236,7 @@ function Move-AzureRmVm {
         $newNic = New-AzureRmNetworkInterface -Name "$($newVm.Name)-nic0" -ResourceGroupName $TargetResourceGroupName -IpConfiguration $newNicIpConfig -Location $Vm.Location
 
         $osDiskConfig = New-AzureRmDiskConfig -CreateOption Import `
-            -SkuName PremiumLRS `
+            -SkuName $diskSku `
             -OsType $Vm.StorageProfile.OsDisk.OsType `
             -Location $Vm.Location `
             -DiskSizeGB $vm.StorageProfile.OsDisk.DiskSizeGB `
@@ -252,7 +253,7 @@ function Move-AzureRmVm {
         foreach ($dataDisk in $Vm.StorageProfile.DataDisks) {
             $dataDiskBlob = $copyJobs | Where-Object { $_.ICloudBlob.Name.Split('.')[0].toLower() -eq $dataDisk.Name.toLower() }
             $newDiskConfig = New-AzureRmDiskConfig -CreateOption Import `
-                -SkuName PremiumLRS `
+                -SkuName $diskSku `
                 -Location $Vm.Location `
                 -DiskSizeGB $dataDisk.DiskSizeGB `
                 -StorageAccountId $targetAccount.Id `
