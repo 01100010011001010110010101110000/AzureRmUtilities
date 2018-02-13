@@ -1,0 +1,109 @@
+{
+    "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "name": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the AKS instance"
+            }
+        },
+        "dnsPrefix": {
+            "type": "string",
+            "metadata": {
+                "description": "Sets the Domain name prefix for the cluster.  The concatenation of the domain name and the regionalized DNS zone make up the fully qualified domain name associated with the public IP address."
+            }
+        },
+        "kubernetesVersion": {
+            "type": "string",
+            "metadata": {
+                "description": "Version of Kubernetes to deploy"
+            },
+            "allowedValues": [
+                "1.7.7",
+                "1.8.1",
+                "1.8.6"
+            ]
+        },
+        "agentCount": {
+            "type": "int",
+            "defaultValue": 1,
+            "metadata": {
+                "description": "The number of agents for the cluster.  This value can be from 1 to 100 (note, for Kubernetes clusters you will also get 1 or 2 public agents in addition to these seleted masters)"
+            },
+            "minValue": 1,
+            "maxValue": 100
+        },
+        "agentVMSize": {
+            "type": "string",
+            "defaultValue": "Standard_D2s_v3",
+            "metadata": {
+                "description": "The size of the Virtual Machine."
+            }
+        },
+        "adminUsername": {
+            "type": "string",
+            "metadata": {
+                "description": "User name for the Linux Virtual Machines."
+            }
+        },
+        "sshRSAPublicKey": {
+            "type": "string",
+            "metadata": {
+                "description": "Configure all linux machines with the SSH RSA public key string.  Your key should include three parts, for example 'ssh-rsa AAAAB...snip...UcyupgH azureuser@linuxvm'"
+            }
+        },
+        "servicePrincipalClientId": {
+            "metadata": {
+                "description": "Client ID (used by cloudprovider)"
+            },
+            "type": "securestring",
+            "defaultValue": "n/a"
+        },
+        "servicePrincipalClientSecret": {
+            "metadata": {
+                "description": "The Service Principal Client Secret."
+            },
+            "type": "securestring",
+            "defaultValue": "n/a"
+        },
+        "vnetSubnetId": {
+            "type": "string",
+            "metadata": {
+                "description": "The subnet the agents will be placed in"
+            }
+        }
+    },
+    "resources": [{
+        "name": "[parameters('name')]",
+        "type": "Microsoft.ContainerService/managedClusters",
+        "apiVersion": "2017-08-31",
+        "location": "[resourceGroup().location]",
+        "tags": {},
+        "properties": {
+            "dnsPrefix": "[parameters('dnsPrefix')]",
+            "kubernetesVersion": "[parameters('kubernetesVersion')]",
+            "agentPoolProfiles": [{
+                "name": "generalpool",
+                "count": "[parameters('agentCount')]",
+                "vmSize": "[parameters('agentVMSize')]",
+                "osDiskSizeGB": 128,
+                "dnsPrefix": "[concat(parameters('dnsPrefix'),'agents')]",
+                "storageProfile": "ManagedDisks",
+                "vnetSubnetID": "[parameters('vnetSubnetId')]"
+            }],
+            "linuxProfile": {
+                "adminUsername": "[parameters('adminUsername')]",
+                "ssh": {
+                    "publicKeys": [{
+                        "keyData": "[parameters('sshRSAPublicKey')]"
+                    }]
+                }
+            },
+            "servicePrincipalProfile": {
+                "clientId": "[parameters('servicePrincipalClientId')]",
+                "secret": "[parameters('servicePrincipalClientSecret')]"
+            }
+        }
+    }]
+}
