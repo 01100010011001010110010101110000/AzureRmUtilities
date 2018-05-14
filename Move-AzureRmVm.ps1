@@ -1,8 +1,6 @@
 $platform = [Environment]::OSVersion.Platform
 if ($platform -ne 'Win32NT') {
-    Write-Error "Azure .NET Core modules do not yet support some storage operations necessary for these functions"
-    exit
-    # Import-Module AzureRM.Netcore
+    Import-Module AzureRM.Netcore
 }
 else {
     Import-Module AzureRM
