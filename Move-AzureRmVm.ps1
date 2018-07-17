@@ -22,7 +22,12 @@ function Copy-AzureRmManagedDisk {
         $containerName = 'migrationvhds'
     )
     $InitialContext = Get-AzureRmContext
-    $diskToken = Grant-AzureRmDiskAccess -ResourceGroupName $managedDisk.ResourceGroupName -DiskName $managedDisk.Name -Access Read -DurationInSecond (60 * 60 * 12)
+
+    $DebugPreference = 'Continue'
+    $result = Grant-AzureRmDiskAccess -ResourceGroupName $ManagedDisk.ResourceGroupName -DiskName $ManagedDisk.Name -Access 'Read' -DurationInSecond 3600 5>&1
+    $DebugPreference = 'SilentlyContinue'
+    $sasUri = ((($result | Where-Object {$_ -match "accessSAS"})[-1].ToString().Split("`n") | Where-Object {$_ -match "accessSAS"}).Split(' ') | Where-Object {$_ -match "https"}).Replace('"', '')
+
     Set-AzureRmContext -SubscriptionId $targetAccount.Id.Split('/')[2] | Out-Null
     $storageAccountKey = Get-AzureRmStorageAccountKey -ResourceGroupName $targetAccount.ResourceGroupName -Name $targetAccount.StorageAccountName
     $storageContext = New-AzureStorageContext -StorageAccountName $targetAccount.StorageAccountName -StorageAccountKey $storageAccountKey.Value[0]
@@ -31,7 +36,7 @@ function Copy-AzureRmManagedDisk {
     if ($container -eq $null) {
         $container = New-AzureStorageContainer $containerName -Context $storageContext
     }
-    $blob = Start-AzureStorageBlobCopy -AbsoluteUri $diskToken.AccessSAS -DestContainer $containerName -DestBlob "$($disk.Name).vhd" -DestContext $storageContext
+    $blob = Start-AzureStorageBlobCopy -AbsoluteUri $sasUri -DestContainer $containerName -DestBlob "$($disk.Name).vhd" -DestContext $storageContext
 
     Set-AzureRmContext -Context $InitialContext | Out-Null
 
@@ -132,7 +137,15 @@ function Move-AzureRmVm {
 
         [Parameter(ValueFromPipeline = $true)]
         [Microsoft.Azure.Commands.Compute.Models.PSVirtualMachine[]]
-        $Vm
+        $Vm,
+
+        [Parameter(Mandatory = $false)]
+        [switch]
+        $PreserveNetworkInterface,
+
+        [Parameter(Mandatory = $false)]
+        [string]
+        $TargetAvailabilitySetId
     )
 
     Begin {
@@ -150,7 +163,7 @@ function Move-AzureRmVm {
         $yes = New-Object System.Management.Automation.Host.ChoiceDescription "&Yes", "Migrate all virtual machines"
         $no = New-Object System.Management.Automation.Host.ChoiceDescription "&No", "Leaves virtual machines where they are"
         $options = [System.Management.Automation.Host.ChoiceDescription[]]($yes, $no)
-        $result = $host.ui.PromptForChoice($title, $message, $options, 1) 
+        $result = $host.ui.PromptForChoice($title, $message, $options, 1)
         switch ($result) {
             0 { Write-Verbose "Migrating VMs" }
             1 {
@@ -164,17 +177,19 @@ function Move-AzureRmVm {
     Process {
         $sourceSubscription = Get-AzureRmSubscription -SubscriptionId $Vm.Id.Split('/')[2]
         Set-AzureRmContext -SubscriptionId $sourceSubscription.Id
-        Stop-AzureRmVM -Name $Vm.Name -ResourceGroupName $Vm.ResourceGroupName -Confirm:$false
+
+        Stop-AzureRmVM -Name $Vm.Name -ResourceGroupName $Vm.ResourceGroupName -Confirm:$false -ErrorAction Continue
+        Remove-AzureRmVM -Name $vm.Name -ResourceGroupName $Vm.ResourceGroupName -Confirm:$false -ErrorAction Continue
 
         Set-AzureRmContext -SubscriptionId $targetSubscription.Id
-        $targetAccount = Get-AzureRmStorageAccount | Where-Object { $_.Location -eq $Vm.Location } | Out-GridView -Title 'Select target storage account' -OutputMode Single
+        $targetAccount = Get-AzureRmStorageAccount | Where-Object { $_.Location -eq $Vm.Location -and $_.Kind -match 'StorageV2' } | Get-Random
         if ($targetAccount -eq $null) {
             Write-Error "Error copying $($Vm.Name): No storage account in $($Vm.Location)"
             return
         }
         Write-Debug $targetAccount.StorageAccountName
         $copyJobs = @()
-        
+
         # Copy OS disk to new subscription
         Set-AzureRmContext -SubscriptionId $sourceSubscription.Id
         if ($Vm.StorageProfile.OsDisk.ManagedDisk) {
@@ -220,18 +235,34 @@ function Move-AzureRmVm {
         }
 
         Set-AzureRmContext -SubscriptionId $targetSubscription.Id
-        $diskSku = if ($Vm.HardwareProfile.VmSize -match "standard_[a-z]s\d+|[a-z]\d+s.*") { 'PremiumLRS' } Else { 'StandardLRS' }
-        switch ($vm.StorageProfile.OsDisk.OsType) {
-            'Linux' { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags }
-            'Windows' { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -LicenseType Windows_Server -Tags $Vm.Tags }
-            Default { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags }
+        $diskSku = if ($Vm.HardwareProfile.VmSize -match "standard_[a-z]s\d+|[a-z]\d+s.*") { 'Premium_LRS' } Else { 'Standard_LRS' }
+        if ($TargetAvailabilitySetId -ne $null) {
+            switch ($vm.StorageProfile.OsDisk.OsType) {
+                'Linux' { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags -AvailabilitySetId $TargetAvailabilitySetId }
+                'Windows' { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -LicenseType Windows_Server -Tags $Vm.Tags -AvailabilitySetId $TargetAvailabilitySetId}
+                Default { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags -AvailabilitySetId $TargetAvailabilitySetId }
+            }
         }
-    
-        $targetNetwork = Get-AzureRmVirtualNetwork | Where-Object { $_.Location -eq $Vm.Location }
-        $targetSubnet = $targetNetwork.Subnets | Out-GridView -Title 'Select the desired subnet' -OutputMode Single
+        else {
+            switch ($vm.StorageProfile.OsDisk.OsType) {
+                'Linux' { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags -AvailabilitySetId $TargetAvailabilitySetId }
+                'Windows' { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -LicenseType Windows_Server -Tags $Vm.Tags -AvailabilitySetId $TargetAvailabilitySetId }
+                Default { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags -AvailabilitySetId $TargetAvailabilitySetId }
+            }
+        }
 
-        $newNicIpConfig = New-AzureRmNetworkInterfaceIpConfig -Name "$($newVm.Name)-ipConfig" -Subnet $targetSubnet
-        $newNic = New-AzureRmNetworkInterface -Name "$($newVm.Name)-nic0" -ResourceGroupName $TargetResourceGroupName -IpConfiguration $newNicIpConfig -Location $Vm.Location
+        if ($PreserveNetworkInterface) {
+            Move-AzureRmResource -Confirm:$false -DestinationResourceGroupName $TargetResourceGroupName -DestinationSubscriptionId $targetSubscription.Id -ResourceId ($Vm.NetworkProfile.NetworkInterfaces | ForEach-Object {$_.id})
+            $splitNic = $Vm.NetworkProfile.NetworkInterfaces[0].Id.split('/')
+            $newNic = Get-AzureRmNetworkInterface -Name $splitNic[8] -ResourceGroupName $TargetResourceGroupName
+        }
+        else {
+            $targetNetwork = Get-AzureRmVirtualNetwork | Where-Object { $_.Location -eq $Vm.Location }
+            $targetSubnet = $targetNetwork.Subnets | Out-GridView -Title 'Select the desired subnet' -OutputMode Single
+
+            $newNicIpConfig = New-AzureRmNetworkInterfaceIpConfig -Name "$($newVm.Name)-ipConfig" -Subnet $targetSubnet
+            $newNic = New-AzureRmNetworkInterface -Name "$($newVm.Name)-nic0" -ResourceGroupName $TargetResourceGroupName -IpConfiguration $newNicIpConfig -Location $Vm.Location   
+        }
 
         $osDiskConfig = New-AzureRmDiskConfig -CreateOption Import `
             -SkuName $diskSku `
@@ -246,8 +277,7 @@ function Move-AzureRmVm {
             'Windows' { Set-AzureRmVMOSDisk -VM $newVm -ManagedDiskId $newOsDisk.Id -Caching $Vm.StorageProfile.OsDisk.Caching -CreateOption Attach -Windows }
             Default { Set-AzureRmVMOSDisk -VM $newVm -ManagedDiskId $newOsDisk.Id -Caching $Vm.StorageProfile.OsDisk.Caching -CreateOption Attach -Linux }
         }
-        
-        
+
         foreach ($dataDisk in $Vm.StorageProfile.DataDisks) {
             $dataDiskBlob = $copyJobs | Where-Object { $_.ICloudBlob.Name.Split('.')[0].toLower() -eq $dataDisk.Name.toLower() }
             $newDiskConfig = New-AzureRmDiskConfig -CreateOption Import `

@@ -11,7 +11,7 @@ function Get-AzureRmVmHealthHistory {
     Param(
         [Parameter(Mandatory = $false)]
         [string]
-        $SubscriptionId = (Get-AzureRmContext).Id,
+        $SubscriptionId = '57b58a4d-3dcc-4953-b123-a66ee909a575',
 
         [Parameter(Mandatory = $false)]
         [switch]
