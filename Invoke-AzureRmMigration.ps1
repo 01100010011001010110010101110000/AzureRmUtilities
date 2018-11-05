@@ -55,8 +55,7 @@ function Invoke-AzureRmMigration {
             foreach ($vm in $group.Group) {
                 if (($VMNameBlacklist | Where-Object { $vm.Name -match $_ }).Count -ne 0 -or ($ResourceGroupBlacklist | Where-Object { $vm.ResourceGroupName -match $_ }).Count -ne 0) { continue; }
                 elseif ($WhatIfPreference) {
-                    # $newsku = $skuMap[$vm.HardwareProfile.VmSize.tolower()]
-                    $newsku = 'standard_d2s_v3'
+                    $newsku = $skuMap[$vm.HardwareProfile.VmSize.tolower()]
                     if($null -ne $newsku){
                         Write-Output $([pscustomobject]@{
                             Subscription  = $vm.id.split('/')[2]
@@ -69,8 +68,7 @@ function Invoke-AzureRmMigration {
                     }
                 }
                 else {
-                    # $newsku = $skuMap[$vm.HardwareProfile.VmSize.tolower()]
-                    $newsku = 'standard_d2s_v3'
+                    $newsku = $skuMap[$vm.HardwareProfile.VmSize.tolower()]
                     if ($null -ne $newsku) {
                         $vm.HardwareProfile.VmSize = $newsku
                         $job = Start-ThreadJob -ScriptBlock {PARAM($vm)
