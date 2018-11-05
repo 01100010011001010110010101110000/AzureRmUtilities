@@ -38,42 +38,54 @@ function Invoke-AzureRmMigration {
         $skuMap = @{}
         $skuMapCustomObject = Get-Content $SkuMapping | ConvertFrom-Json
         $skuMapCustomObject.psobject.properties | ForEach-Object { $skumap[$_.Name.ToLower()] = $_.Value.ToLower() }
+        $collectedVms = @()
     }
     
     Process {
-        foreach ($vm in $Vms) {
-            if (($VMNameBlacklist | Where-Object { $vm.Name -match $_ }).Count -ne 0 -or ($ResourceGroupBlacklist | Where-Object { $vm.ResourceGroupName -match $_ }).Count -ne 0) { continue; }
-            elseif ($WhatIfPreference) {
-                $newsku = $skuMap[$vm.HardwareProfile.VmSize.tolower()]
-                if($null -ne $newsku){
-                    Write-Output $([pscustomobject]@{
-                        Subscription  = $vm.id.split('/')[2]
-                        ResourceGroup = $vm.ResourceGroupName
-                        Location      = $vm.Location
-                        VM            = $vm.Name
-                        CurrentSKU    = $vm.HardwareProfile.VmSize
-                        NewSKU        = $newsku
-                    })
-                }
-            }
-            else {
-                $jobs = @()
-                $VmContext = Set-AzureRmContext -SubscriptionId $vm.id.split('/')[2]
-                $newsku = $skuMap[$vm.HardwareProfile.VmSize.tolower()]
-                if ($null -ne $newsku) {
-                    $vm.HardwareProfile.VmSize = $newsku
-                    $jobs += Start-ThreadJob -ScriptBlock {PARAM($vm)
-                        Stop-AzureRmVM -Name $vm.Name -ResourceGroupName $vm.ResourceGroupName -Confirm:$false -Force -DefaultProfile $VmContext
-                        Update-AzureRmVm -VM $vm -ResourceGroupName $vm.ResourceGroupName -Confirm:$false -DefaultProfile $VmContext
-                        Start-AzureRmVM -Name $vm.Name -ResourceGroupName $vm.ResourceGroupName -Confirm:$false -DefaultProfile $VmContext
-                    } -ThrottleLimit 30 -ArgumentList $vm
-                }
-                Write-Output $jobs
-            }
-        }   
+        $collectedVms += $vms
     }
     
     End {
+        $subscriptionGroups = $collectedVms | Group-Object { $_.Id.Split('/')[2] }
+        $count = 1
+        foreach ($group in $subscriptionGroups) {
+            $jobs = @()
+            Write-Progress -Activity 'Resizing VMs' -Status $group.Name -PercentComplete $($count / $subscriptionGroups.Count * 100)
+            Set-AzureRmContext -SubscriptionId $group.Name | Out-Null
+            foreach ($vm in $group.Group) {
+                if (($VMNameBlacklist | Where-Object { $vm.Name -match $_ }).Count -ne 0 -or ($ResourceGroupBlacklist | Where-Object { $vm.ResourceGroupName -match $_ }).Count -ne 0) { continue; }
+                elseif ($WhatIfPreference) {
+                    # $newsku = $skuMap[$vm.HardwareProfile.VmSize.tolower()]
+                    $newsku = 'standard_d2s_v3'
+                    if($null -ne $newsku){
+                        Write-Output $([pscustomobject]@{
+                            Subscription  = $vm.id.split('/')[2]
+                            ResourceGroup = $vm.ResourceGroupName
+                            Location      = $vm.Location
+                            VM            = $vm.Name
+                            CurrentSKU    = $vm.HardwareProfile.VmSize
+                            NewSKU        = $newsku
+                        })
+                    }
+                }
+                else {
+                    # $newsku = $skuMap[$vm.HardwareProfile.VmSize.tolower()]
+                    $newsku = 'standard_d2s_v3'
+                    if ($null -ne $newsku) {
+                        $vm.HardwareProfile.VmSize = $newsku
+                        $job = Start-ThreadJob -ScriptBlock {PARAM($vm)
+                            Stop-AzureRmVM -Name $vm.Name -ResourceGroupName $vm.ResourceGroupName -Confirm:$false -Force
+                            Update-AzureRmVm -VM $vm -ResourceGroupName $vm.ResourceGroupName -Confirm:$false
+                            Start-AzureRmVM -Name $vm.Name -ResourceGroupName $vm.ResourceGroupName -Confirm:$false
+                        } -ThrottleLimit 30 -ArgumentList $vm
+                        $jobs += $job
+                    }
+                }
+            }
+            $jobs | Wait-Job
+            write-output $jobs
+            $count = $count + 1
+        }
         Set-AzureRmContext -Context $context | Out-Null
     }   
 }
