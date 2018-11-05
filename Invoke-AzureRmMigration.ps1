@@ -19,7 +19,7 @@ function Invoke-AzureRmMigration {
         $Vms,
 
         [Parameter(Mandatory = $false)]
-        $SkuMapping = '/Users/tgregory/Downloads/sku-mapping.json',
+        $SkuMapping = '/Users/tgregory/Downloads/sku-mapping.json'
     )
     Begin {
         $platform = [Environment]::OSVersion.Platform
@@ -29,6 +29,9 @@ function Invoke-AzureRmMigration {
         else {
             Import-Module AzureRM
         }
+
+        $context = Get-AzureRmContext
+
         $ResourceGroupBlacklist = @('databricks', 'oracle', 'azunac', 'citrix', 'domaincontroller')
         $VMNameBlacklist = @('azunac', 'azumsmgbk', 'azumsdbsq005s', 'azumsmgsm501p', 'srwhp0004', 'azumsdbsq090p', 'aks-agentpool', 'softnas', 'msadrw')
 
@@ -49,7 +52,7 @@ function Invoke-AzureRmMigration {
                         Location      = $vm.Location
                         VM            = $vm.Name
                         CurrentSKU    = $vm.HardwareProfile.VmSize
-                        NewSKU        = $skuMap[$vm.HardwareProfile.VmSize.tolower()]
+                        NewSKU        = $newsku
                     })
                 }
             }
