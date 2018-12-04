@@ -30,6 +30,7 @@ function Get-AzureRmVmHealthHistory {
         $initialErrorPreference = $ErrorActionPreference
         $ErrorActionPreference = "Stop"
         $apiVersion = '2015-01-01'
+        Set-StrictMode -Off
     }
 
     Process {
@@ -42,11 +43,11 @@ function Get-AzureRmVmHealthHistory {
                 'Accept'        = 'application/json'
                 'Authorization' = 'Bearer ' + $token
             }
-            Write-Verbose "OAuth2 Access Token: $token"
+            Write-Verbose "Bearer Token: $token"
 
             $processed = 0
             foreach ($vm in $vms) {
-                Write-Progress -Activity 'Fetching health history' -PercentComplete (($processed / $vms.Count) * 100) -CurrentOperation $vm.Name
+                Write-Progress -Activity "Fetching health history from $($subscription.name)" -PercentComplete (($processed / $vms.Count) * 100) -CurrentOperation $vm.Name
                 try {
                     $history = Invoke-RestMethod -Uri "https://management.azure.com/$($vm.Id)/Providers/Microsoft.ResourceHealth/availabilityStatuses?api-version=$apiVersion" -Headers $authHeader
                 }
@@ -56,8 +57,13 @@ function Get-AzureRmVmHealthHistory {
                         Write-Verbose "VERBOSE: Encountered request limit, sleeping for $($_.Exception.Response.Headers.RetryAfter)"
                         sleep $_.Exception.Response.Headers.RetryAfter
                         $history = Invoke-RestMethod -Uri "https://management.azure.com/$($vm.Id)/Providers/Microsoft.ResourceHealth/availabilityStatuses?api-version=$apiVersion" -Headers $authHeader
+                        Write-Verbose $history
+                    }
+                    else {
+                        throw $_.Exception
                     }
                 }
+
                 Write-Output $history.Value
                 $processed += 1
             }

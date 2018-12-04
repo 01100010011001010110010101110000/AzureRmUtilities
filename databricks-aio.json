@@ -1,0 +1,192 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+       "nsgName": {
+            "defaultValue": "databricks-nsg",
+            "type": "string"
+       },
+       "vnetName": {
+          "defaultValue": "databricks-vnet",
+          "type": "string"
+       },
+       "workspaceName": {
+          "type": "string"
+       },
+       "vnetAddressPrefix": {
+          "defaultValue": "172.26",
+          "type": "string"
+       },
+       "privateSubnetName": {
+          "defaultValue": "private-subnet",
+          "type": "string"
+       },
+       "publicSubnetName": {
+          "defaultValue": "public-subnet",
+          "type": "string"
+       },
+       "workspaceTier": {
+          "defaultValue": "premium",
+          "type": "string"
+       }
+    },
+    "resources": [
+       {
+          "apiVersion": "2018-02-01",
+          "type": "Microsoft.Network/networkSecurityGroups",
+          "location": "[resourceGroup().location]",
+          "name": "[parameters('nsgName')]",
+          "properties": {
+             "securityRules": [
+                {
+                   "name": "databricks-worker-to-worker",
+                   "properties": {
+                      "access": "Allow",
+                      "description": "Required for worker nodes communication within a cluster.",
+                      "destinationAddressPrefix": "*",
+                      "destinationPortRange": "*",
+                      "direction": "Inbound",
+                      "priority": 200,
+                      "protocol": "*",
+                      "sourceAddressPrefix": "VirtualNetwork",
+                      "sourcePortRange": "*"
+                   }
+                },
+                {
+                   "name": "databricks-control-plane-ssh",
+                   "properties": {
+                      "access": "Allow",
+                      "description": "Required for Databricks control plane management of worker nodes.",
+                      "destinationAddressPrefix": "*",
+                      "destinationPortRange": "22",
+                      "direction": "Inbound",
+                      "priority": 100,
+                      "protocol": "*",
+                      "sourceAddressPrefix": "[variables('controlPlaneIp')]",
+                      "sourcePortRange": "*"
+                   }
+                },
+                {
+                   "name": "databricks-control-plane-worker-proxy",
+                   "properties": {
+                      "access": "Allow",
+                      "description": "Required for Databricks control plane communication with worker nodes.",
+                      "destinationAddressPrefix": "*",
+                      "destinationPortRange": "5557",
+                      "direction": "Inbound",
+                      "priority": 110,
+                      "protocol": "*",
+                      "sourceAddressPrefix": "[variables('controlPlaneIp')]",
+                      "sourcePortRange": "*"
+                   }
+                },
+                {
+                   "name": "databricks-worker-to-internet",
+                   "properties": {
+                      "access": "Allow",
+                      "description": "Required for workers communication with Internet.",
+                      "destinationAddressPrefix": "*",
+                      "destinationPortRange": "*",
+                      "direction": "Outbound",
+                      "priority": 120,
+                      "protocol": "*",
+                      "sourceAddressPrefix": "*",
+                      "sourcePortRange": "*"
+                   }
+                }
+             ]
+          }
+       },
+       {
+          "apiVersion": "2018-02-01",
+          "type": "Microsoft.Network/virtualNetworks",
+          "location": "[resourceGroup().location]",
+          "name": "[parameters('vnetName')]",
+          "dependsOn": [
+            "[concat('Microsoft.Network/networkSecurityGroups/', parameters('nsgName'))]"
+          ],
+          "properties": {
+             "addressSpace": {
+                "addressPrefixes": [
+                   "[variables('vnetCidr')]"
+                ]
+             },
+             "subnets": [
+                {
+                   "name": "[parameters('publicSubnetName')]",
+                   "properties": {
+                      "addressPrefix": "[variables('publicSubnetCidr')]",
+                      "networkSecurityGroup": {
+                         "id": "[variables('nsgId')]"
+                      }
+                   }
+                },
+                {
+                   "name": "[parameters('privateSubnetName')]",
+                   "properties": {
+                      "addressPrefix": "[variables('privateSubnetCidr')]",
+                      "networkSecurityGroup": {
+                         "id": "[variables('nsgId')]"
+                      }
+                   }
+                }
+             ]
+          }
+       },
+       {
+          "apiVersion": "2018-04-01",
+          "type": "Microsoft.Databricks/workspaces",
+          "location": "[resourceGroup().location]",
+          "name": "[parameters('workspaceName')]",
+          "dependsOn": [
+            "[concat('Microsoft.Network/networkSecurityGroups/', parameters('nsgName'))]",
+            "[concat('Microsoft.Network/virtualNetworks/', parameters('vnetName'))]"
+          ],
+          "sku": {
+             "name": "[parameters('workspaceTier')]"
+          },
+          "comments": "Please do not use an existing resource group for ManagedResourceGroupId.",
+          "properties": {
+             "ManagedResourceGroupId": "[variables('managedResourceGroupId')]",
+             "parameters": {
+                "customVirtualNetworkId": {
+                   "value": "[variables('vnetId')]"
+                },
+                "customPublicSubnetName": {
+                   "value": "[parameters('publicSubnetName')]"
+                },
+                "customPrivateSubnetName": {
+                   "value": "[parameters('privateSubnetName')]"
+                }
+             }
+          }
+       }
+    ],
+    "variables": {
+       "azureRegionToControlPlaneIp": {
+          "australiaeast": "13.70.105.50/32",
+          "australiasoutheast": "13.70.105.50/32",
+          "centralus": "23.101.152.95/32",
+          "eastasia": "52.187.0.85/32",
+          "eastus": "23.101.152.95/32",
+          "eastus2": "23.101.152.95/32",
+          "northcentralus": "23.101.152.95/32",
+          "northeurope": "23.100.0.135/32",
+          "southcentralus": "40.83.178.242/32",
+          "southeastasia": "52.187.0.85/32",
+          "uksouth": "51.140.203.27/32",
+          "ukwest": "51.140.203.27/32",
+          "westeurope": "23.100.0.135/32",
+          "westus": "40.83.178.242/32",
+          "westus2": "40.83.178.242/32"
+       },
+       "controlPlaneIp": "[variables('azureRegionToControlPlaneIp')[resourceGroup().location]]",
+       "privateSubnetCidr": "[concat(parameters('vnetAddressPrefix'), '.176.0/22')]",
+       "publicSubnetCidr": "[concat(parameters('vnetAddressPrefix'), '.180.0/22')]",
+       "vnetCidr": "[concat(parameters('vnetAddressPrefix'), '.176.0/20')]",
+       "nsgId": "[resourceId('Microsoft.Network/networkSecurityGroups', parameters('nsgName'))]",
+       "vnetId": "[resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName'))]",
+       "managedResourceGroupId": "[concat(subscription().id, '/resourceGroups/', variables('managedResourceGroupName'))]",
+       "managedResourceGroupName": "[concat('databricks-rg-', parameters('workspaceName'), '-', uniqueString(parameters('workspaceName'), resourceGroup().id))]"
+    }
+ }
