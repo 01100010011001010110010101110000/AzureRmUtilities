@@ -1,13 +1,6 @@
-$platform = [Environment]::OSVersion.Platform
-if ($platform -ne 'Win32NT') {
-    Import-Module AzureRM.Netcore
-}
-else {
-    Import-Module AzureRM
-    Import-Module Azure.Storage
-}
+Import-Module Az
 
-function Copy-AzureRmManagedDisk {
+function Copy-AzManagedDisk {
     Param(
         [Parameter(Mandatory = $true)]
         [Microsoft.Azure.Commands.Compute.Automation.Models.PSDisk]
@@ -21,29 +14,31 @@ function Copy-AzureRmManagedDisk {
         [string]
         $containerName = 'migrationvhds'
     )
-    $InitialContext = Get-AzureRmContext
+    $InitialContext = Get-AzContext
 
     $DebugPreference = 'Continue'
-    $result = Grant-AzureRmDiskAccess -ResourceGroupName $ManagedDisk.ResourceGroupName -DiskName $ManagedDisk.Name -Access 'Read' -DurationInSecond 3600 5>&1
+    $result = Grant-AzDiskAccess -ResourceGroupName $ManagedDisk.ResourceGroupName -DiskName $ManagedDisk.Name -Access 'Read' -DurationInSecond 3600 5>&1
     $DebugPreference = 'SilentlyContinue'
-    $sasUri = ((($result | Where-Object {$_ -match "accessSAS"})[-1].ToString().Split("`n") | Where-Object {$_ -match "accessSAS"}).Split(' ') | Where-Object {$_ -match "https"}).Replace('"', '')
+    $sasUri = $result.AccessSAS
 
-    Set-AzureRmContext -SubscriptionId $targetAccount.Id.Split('/')[2] | Out-Null
-    $storageAccountKey = Get-AzureRmStorageAccountKey -ResourceGroupName $targetAccount.ResourceGroupName -Name $targetAccount.StorageAccountName
-    $storageContext = New-AzureStorageContext -StorageAccountName $targetAccount.StorageAccountName -StorageAccountKey $storageAccountKey.Value[0]
+    Write-Host $sasUri
 
-    $container = Get-AzureStorageContainer $containerName -Context $storageContext -ErrorAction Ignore
-    if ($container -eq $null) {
-        $container = New-AzureStorageContainer $containerName -Context $storageContext
+    Set-AzContext -SubscriptionId $targetAccount.Id.Split('/')[2] | Out-Null
+    $storageAccountKey = Get-AzStorageAccountKey -ResourceGroupName $targetAccount.ResourceGroupName -Name $targetAccount.StorageAccountName
+    $storageContext = New-AzStorageContext -StorageAccountName $targetAccount.StorageAccountName -StorageAccountKey $storageAccountKey.Value[0]
+
+    $container = Get-AzStorageContainer $containerName -Context $storageContext -ErrorAction Ignore
+    if ($null -eq $container) {
+        $container = New-AzStorageContainer $containerName -Context $storageContext
     }
-    $blob = Start-AzureStorageBlobCopy -AbsoluteUri $sasUri -DestContainer $containerName -DestBlob "$($disk.Name).vhd" -DestContext $storageContext
+    $blob = Start-AzStorageBlobCopy -AbsoluteUri $sasUri -DestContainer $containerName -DestBlob "$($disk.Name).vhd" -DestContext $storageContext
 
-    Set-AzureRmContext -Context $InitialContext | Out-Null
+    Set-AzContext -Context $InitialContext | Out-Null
 
     Write-Output $blob
 }
 
-function Copy-AzureRmUnmanagedDisk {
+function Copy-AzUnmanagedDisk {
     Param(
         # Source Storage Account
         [Parameter(Mandatory = $true)]
@@ -61,20 +56,20 @@ function Copy-AzureRmUnmanagedDisk {
         $TargetAccount
     )
 
-    $InitialContext = Get-AzureRmContext
+    $InitialContext = Get-AzContext
 
-    Set-AzureRmContext -SubscriptionId $targetAccount.Id.Split('/')[2] | Out-Null
+    Set-AzContext -SubscriptionId $targetAccount.Id.Split('/')[2] | Out-Null
 
-    Set-AzureRmContext -Context $InitialContext | Out-Null
-    $storageAccountKey = Get-AzureRmStorageAccountKey -ResourceGroupName $targetAccount.ResourceGroupName -Name $targetAccount.StorageAccountName
-    $storageContext = New-AzureStorageContext -StorageAccountName $targetAccount.StorageAccountName -StorageAccountKey $storageAccountKey.Value[0]
-    $container = Get-AzureStorageContainer $containerName -Context $storageContext -ErrorAction Ignore
-    if ($container -eq $null) {
-        $container = New-AzureStorageContainer $containerName -Context $storageContext
+    Set-AzContext -Context $InitialContext | Out-Null
+    $storageAccountKey = Get-AzStorageAccountKey -ResourceGroupName $targetAccount.ResourceGroupName -Name $targetAccount.StorageAccountName
+    $storageContext = New-AzStorageContext -StorageAccountName $targetAccount.StorageAccountName -StorageAccountKey $storageAccountKey.Value[0]
+    $container = Get-AzStorageContainer $containerName -Context $storageContext -ErrorAction Ignore
+    if ($null -eq $container) {
+        $container = New-AzStorageContainer $containerName -Context $storageContext
     }
 }
 
-function Get-AzureRmStorageAccountFromUri {
+function Get-AzStorageAccountFromUri {
     Param(
         # Blob Uri
         [Parameter(ValueFromPipeline = $true)]
@@ -87,12 +82,12 @@ function Get-AzureRmStorageAccountFromUri {
         $SearchAllSubscriptions
     )
     Begin {
-        $InitialContext = Get-AzureRmContext
+        $InitialContext = Get-AzContext
         if ($SearchAllSubscriptions) {
-            $subscriptions = Get-AzureRmSubscription
+            $subscriptions = Get-AzSubscription
         }
         else {
-            $subscriptions = @((Get-AzureRmContext).Subscription)
+            $subscriptions = @((Get-AzContext).Subscription)
         }
     }
 
@@ -100,18 +95,18 @@ function Get-AzureRmStorageAccountFromUri {
         $accountName = ([System.Uri]$BlobUri).Host.Split('.')[0]
 
         foreach ($subscription in $subscriptions) {
-            Set-AzureRmContext -SubscriptionId $subscription.Id | Out-Null
-            $account = Get-AzureRmStorageAccount | Where-Object { $_.StorageAccountName.toLower() -eq $accountName.ToLower() }
+            Set-AzContext -SubscriptionId $subscription.Id | Out-Null
+            $account = Get-AzStorageAccount | Where-Object { $_.StorageAccountName.toLower() -eq $accountName.ToLower() }
         }
     }
 
     end {
-        Set-AzureRmContext -Context $InitialContext | Out-Null
+        Set-AzContext -Context $InitialContext | Out-Null
         Write-Output $account
     }
 }
 
-function Move-AzureRmVm {
+function Move-AzVm {
     <#
         .SYNOPSIS 
             Moves a VM from one resource group into another in the same subscription or into another in a new subscription
@@ -161,11 +156,11 @@ function Move-AzureRmVm {
     Begin {
         $InitialPreference = $ErrorActionPreference
         $ErrorActionPreference = "Stop"
-        $InitialAzureRmContext = Get-AzureRmContext
+        $InitialAzContext = Get-AzContext
 
-        Set-AzureRmContext -SubscriptionId $TargetSubscriptionId
-        $targetSubscription = Get-AzureRmSubscription -SubscriptionId $TargetSubscriptionId
-        $targetResourceGroup = Get-AzureRmResourceGroup -Name $TargetResourceGroupName
+        Set-AzContext -SubscriptionId $TargetSubscriptionId
+        $targetSubscription = Get-AzSubscription -SubscriptionId $TargetSubscriptionId
+        $targetResourceGroup = Get-AzResourceGroup -Name $TargetResourceGroupName
 
         # Confirm that we want to be doing this
         $title = "Migrate Virtual Machine"
@@ -178,21 +173,21 @@ function Move-AzureRmVm {
             0 { Write-Verbose "Migrating VMs" }
             1 {
                 Write-Verbose "Leaving VMs where they are"
-                exit 0
+                return $null
             }
         }
-        Set-AzureRmContext -Context $InitialAzureRmContext
+        Set-AzContext -Context $InitialAzContext
     }
 
     Process {
-        $sourceSubscription = Get-AzureRmSubscription -SubscriptionId $Vm.Id.Split('/')[2]
-        Set-AzureRmContext -SubscriptionId $sourceSubscription.Id
+        $sourceSubscription = Get-AzSubscription -SubscriptionId $Vm.Id.Split('/')[2]
+        Set-AzContext -SubscriptionId $sourceSubscription.Id
 
-        Stop-AzureRmVM -Name $Vm.Name -ResourceGroupName $Vm.ResourceGroupName -Confirm:$false -ErrorAction Continue
-        Remove-AzureRmVM -Name $vm.Name -ResourceGroupName $Vm.ResourceGroupName -Confirm:$false -ErrorAction Continue
+        Stop-AzVM -Name $Vm.Name -ResourceGroupName $Vm.ResourceGroupName -Confirm:$false -ErrorAction Continue
+        Remove-AzVM -Name $vm.Name -ResourceGroupName $Vm.ResourceGroupName -Confirm:$false -ErrorAction Continue
 
-        Set-AzureRmContext -SubscriptionId $targetSubscription.Id
-        $targetAccount = Get-AzureRmStorageAccount | Where-Object { $_.Location -eq $TargetLocation -and $_.Kind -match 'StorageV2' } | Get-Random
+        Set-AzContext -SubscriptionId $targetSubscription.Id
+        $targetAccount = Get-AzStorageAccount | Where-Object { $_.Location -eq $TargetLocation -and $_.Kind -match 'StorageV2' } | Get-Random
         if ($targetAccount -eq $null) {
             Write-Error "Error copying $($Vm.Name): No storage account in $($Vm.Location)"
             return
@@ -201,41 +196,41 @@ function Move-AzureRmVm {
         $copyJobs = @()
 
         # Copy OS disk to new subscription
-        Set-AzureRmContext -SubscriptionId $sourceSubscription.Id
+        Set-AzContext -SubscriptionId $sourceSubscription.Id
         if ($Vm.StorageProfile.OsDisk.ManagedDisk) {
-            $disk = Get-AzureRmDisk -DiskName $Vm.StorageProfile.OsDisk.Name -ResourceGroupName $Vm.ResourceGroupName
-            $osBlob = Copy-AzureRmManagedDisk -ManagedDisk $disk -TargetAccount $targetAccount
+            $disk = Get-AzDisk -DiskName $Vm.StorageProfile.OsDisk.Name -ResourceGroupName $Vm.ResourceGroupName
+            $osBlob = Copy-AzManagedDisk -ManagedDisk $disk -TargetAccount $targetAccount
             $copyJobs += $osBlob
         }
         else {
             $osDiskUri = $Vm.StorageProfile.OsDisk.Vhd.Uri
-            $osDiskAccount = Get-AzureRmStorageAccountFromUri -BlobUri $osDiskUri
-            $osBlob = Copy-AzureRmUnmanagedDisk -SourceAccount $osDiskAccount -SourceBlobUri $osDiskUri -TargetAccount $targetAccount
+            $osDiskAccount = Get-AzStorageAccountFromUri -BlobUri $osDiskUri
+            $osBlob = Copy-AzUnmanagedDisk -SourceAccount $osDiskAccount -SourceBlobUri $osDiskUri -TargetAccount $targetAccount
             $copyJobs += $osBlob
         }
 
         # Copy data disks to new subscription
         foreach ($dataDisk in $Vm.StorageProfile.DataDisks) {
             if ($dataDisk.ManagedDisk) {
-                $disk = Get-AzureRmDisk -DiskName $dataDisk.Name -ResourceGroupName $Vm.ResourceGroupName
-                $blob = Copy-AzureRmManagedDisk -ManagedDisk $disk -TargetAccount $targetAccount
+                $disk = Get-AzDisk -DiskName $dataDisk.Name -ResourceGroupName $Vm.ResourceGroupName
+                $blob = Copy-AzManagedDisk -ManagedDisk $disk -TargetAccount $targetAccount
                 $copyJobs += $blob
             }
             else {
                 $diskUri = $dataDisk.Vhd.Uri
-                $diskAccount = Get-AzureRmStorageAccountFromUri -BlobUri $diskUri
-                $diskBlob = Copy-AzureRmUnmanagedDisk -SourceAccount $diskAccount -SourceBlobUri $diskUri -TargetAccount $targetAccount
+                $diskAccount = Get-AzStorageAccountFromUri -BlobUri $diskUri
+                $diskBlob = Copy-AzUnmanagedDisk -SourceAccount $diskAccount -SourceBlobUri $diskUri -TargetAccount $targetAccount
                 $copyJobs += $diskBlob
             }
         }
         
         foreach ($job in $copyJobs) {
-            $status = $job | Get-AzureStorageBlobCopyState
+            $status = $job | Get-AzStorageBlobCopyState
             Write-Debug $status
 
             while ($status.Status -eq 'Pending') {
                 Start-Sleep 30
-                $status = $job | Get-AzureStorageBlobCopyState
+                $status = $job | Get-AzStorageBlobCopyState
                 Write-Debug $status
             }
             if ($status.Status -eq 'Failed') {
@@ -244,71 +239,71 @@ function Move-AzureRmVm {
             }
         }
 
-        Set-AzureRmContext -SubscriptionId $targetSubscription.Id
+        Set-AzContext -SubscriptionId $targetSubscription.Id
         $diskSku = if ($Vm.HardwareProfile.VmSize -match "standard_[a-z]s\d+|[a-z]\d+s.*") { 'Premium_LRS' } Else { 'Standard_LRS' }
         if ($TargetAvailabilitySetId -ne $null -and $TargetAvailabilitySetId -ne '') {
             switch ($vm.StorageProfile.OsDisk.OsType) {
-                'Linux' { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags -AvailabilitySetId $TargetAvailabilitySetId }
-                'Windows' { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -LicenseType Windows_Server -Tags $Vm.Tags -AvailabilitySetId $TargetAvailabilitySetId}
-                Default { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags -AvailabilitySetId $TargetAvailabilitySetId }
+                'Linux' { $newVm = New-AzVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags -AvailabilitySetId $TargetAvailabilitySetId }
+                'Windows' { $newVm = New-AzVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -LicenseType Windows_Server -Tags $Vm.Tags -AvailabilitySetId $TargetAvailabilitySetId}
+                Default { $newVm = New-AzVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags -AvailabilitySetId $TargetAvailabilitySetId }
             }
         }
         else {
             switch ($vm.StorageProfile.OsDisk.OsType) {
-                'Linux' { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags }
-                'Windows' { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -LicenseType Windows_Server -Tags $Vm.Tags }
-                Default { $newVm = New-AzureRmVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags }
+                'Linux' { $newVm = New-AzVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags }
+                'Windows' { $newVm = New-AzVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -LicenseType Windows_Server -Tags $Vm.Tags }
+                Default { $newVm = New-AzVMConfig -VMName $Vm.Name -VMSize $Vm.HardwareProfile.VmSize -Tags $Vm.Tags }
             }
         }
 
         if ($PreserveNetworkInterface) {
-            Move-AzureRmResource -Confirm:$false -DestinationResourceGroupName $TargetResourceGroupName -DestinationSubscriptionId $targetSubscription.Id -ResourceId ($Vm.NetworkProfile.NetworkInterfaces | ForEach-Object {$_.id})
+            Move-AzResource -Confirm:$false -DestinationResourceGroupName $TargetResourceGroupName -DestinationSubscriptionId $targetSubscription.Id -ResourceId ($Vm.NetworkProfile.NetworkInterfaces | ForEach-Object {$_.id})
             $splitNic = $Vm.NetworkProfile.NetworkInterfaces[0].Id.split('/')
-            $newNic = Get-AzureRmNetworkInterface -Name $splitNic[8] -ResourceGroupName $TargetResourceGroupName
+            $newNic = Get-AzNetworkInterface -Name $splitNic[8] -ResourceGroupName $TargetResourceGroupName
         }
         else {
             $splitSubnetId = $TargetSubnetId.split('/')
             $subnetResourceGroup = $splitSubnetId[4]
             $subnetVirtualNetworkName = $splitSubnetId[8]
-            $targetVirtualNetwork = Get-AzureRmVirtualNetwork -Name $subnetVirtualNetworkName -ResourceGroupName $subnetResourceGroup
+            $targetVirtualNetwork = Get-AzVirtualNetwork -Name $subnetVirtualNetworkName -ResourceGroupName $subnetResourceGroup
             $targetSubnet = $targetVirtualNetwork.Subnets | Where-Object { $_.Id.ToLower() -eq $TargetSubnetId.ToLower() }
 
-            $newNicIpConfig = New-AzureRmNetworkInterfaceIpConfig -Name "$($newVm.Name)-ipConfig" -Subnet $targetSubnet
-            $newNic = New-AzureRmNetworkInterface -Name "$($newVm.Name)-nic0" -ResourceGroupName $TargetResourceGroupName -IpConfiguration $newNicIpConfig -Location $TargetLocation
+            $newNicIpConfig = New-AzNetworkInterfaceIpConfig -Name "$($newVm.Name)-ipConfig" -Subnet $targetSubnet
+            $newNic = New-AzNetworkInterface -Name "$($newVm.Name)-nic0" -ResourceGroupName $TargetResourceGroupName -IpConfiguration $newNicIpConfig -Location $TargetLocation
         }
 
-        $osDiskConfig = New-AzureRmDiskConfig -CreateOption Import `
+        $osDiskConfig = New-AzDiskConfig -CreateOption Import `
             -SkuName $diskSku `
             -OsType $Vm.StorageProfile.OsDisk.OsType `
             -Location $TargetLocation `
             -DiskSizeGB $vm.StorageProfile.OsDisk.DiskSizeGB `
             -StorageAccountId $targetAccount.Id `
             -SourceUri $osBlob.ICloudBlob.Uri
-        $newOsDisk = New-AzureRmDisk -Disk $osDiskConfig -ResourceGroupName $TargetResourceGroupName -DiskName $vm.StorageProfile.OsDisk.Name
+        $newOsDisk = New-AzDisk -Disk $osDiskConfig -ResourceGroupName $TargetResourceGroupName -DiskName $vm.StorageProfile.OsDisk.Name
         switch ($vm.StorageProfile.OsDisk.OsType) {
-            'Linux' { Set-AzureRmVMOSDisk -VM $newVm -ManagedDiskId $newOsDisk.Id -Caching $Vm.StorageProfile.OsDisk.Caching -CreateOption Attach -Linux }
-            'Windows' { Set-AzureRmVMOSDisk -VM $newVm -ManagedDiskId $newOsDisk.Id -Caching $Vm.StorageProfile.OsDisk.Caching -CreateOption Attach -Windows }
-            Default { Set-AzureRmVMOSDisk -VM $newVm -ManagedDiskId $newOsDisk.Id -Caching $Vm.StorageProfile.OsDisk.Caching -CreateOption Attach -Linux }
+            'Linux' { Set-AzVMOSDisk -VM $newVm -ManagedDiskId $newOsDisk.Id -Caching $Vm.StorageProfile.OsDisk.Caching -CreateOption Attach -Linux }
+            'Windows' { Set-AzVMOSDisk -VM $newVm -ManagedDiskId $newOsDisk.Id -Caching $Vm.StorageProfile.OsDisk.Caching -CreateOption Attach -Windows }
+            Default { Set-AzVMOSDisk -VM $newVm -ManagedDiskId $newOsDisk.Id -Caching $Vm.StorageProfile.OsDisk.Caching -CreateOption Attach -Linux }
         }
 
         foreach ($dataDisk in $Vm.StorageProfile.DataDisks) {
             $dataDiskBlob = $copyJobs | Where-Object { $_.ICloudBlob.Name.Split('.')[0].toLower() -eq $dataDisk.Name.toLower() }
-            $newDiskConfig = New-AzureRmDiskConfig -CreateOption Import `
+            $newDiskConfig = New-AzDiskConfig -CreateOption Import `
                 -SkuName $diskSku `
                 -Location $TargetLocation `
                 -DiskSizeGB $dataDisk.DiskSizeGB `
                 -StorageAccountId $targetAccount.Id `
                 -SourceUri $dataDiskBlob.ICloudBlob.Uri
-            $newDataDisk = New-AzureRmDisk -Disk $newDiskConfig -ResourceGroupName $TargetResourceGroupName -DiskName $dataDisk.Name
-            Add-AzureRmVMDataDisk -VM $newVm -Lun $dataDisk.Lun -Caching $dataDisk.Caching -ManagedDiskId $newDataDisk.Id -CreateOption Attach
+            $newDataDisk = New-AzDisk -Disk $newDiskConfig -ResourceGroupName $TargetResourceGroupName -DiskName $dataDisk.Name
+            Add-AzVMDataDisk -VM $newVm -Lun $dataDisk.Lun -Caching $dataDisk.Caching -ManagedDiskId $newDataDisk.Id -CreateOption Attach
         }
-        Add-AzureRmVMNetworkInterface -VM $newVm -Id $newNic.Id
+        Add-AzVMNetworkInterface -VM $newVm -Id $newNic.Id
 
-        Write-Output (New-AzureRmVM -ResourceGroupName $TargetResourceGroupName -Location $TargetLocation -VM $newVm)
+        Write-Output (New-AzVM -ResourceGroupName $TargetResourceGroupName -Location $TargetLocation -VM $newVm)
     }
 
     End {
         $ErrorActionPreference = $InitialPreference
-        Set-AzureRmContext -Context $InitialAzureRmContextpo
+        Set-AzContext -Context $InitialAzContext
     }
 }
