@@ -22,15 +22,9 @@ function Invoke-AzureRmMigration {
         $SkuMapping = '/Users/tgregory/Downloads/sku-mapping.json'
     )
     Begin {
-        $platform = [Environment]::OSVersion.Platform
-        if ($platform -ne 'Win32NT') {
-            Import-Module AzureRM.Netcore
-        }
-        else {
-            Import-Module AzureRM
-        }
+        Import-Module Az
 
-        $context = Get-AzureRmContext
+        $context = Get-AzContext
 
         $ResourceGroupBlacklist = @('databricks', 'oracle', 'azunac', 'citrix', 'domaincontroller')
         $VMNameBlacklist = @('azunac', 'azumsmgbk', 'azumsdbsq005s', 'azumsmgsm501p', 'srwhp0004', 'azumsdbsq090p', 'aks-agentpool', 'softnas', 'msadrw')
@@ -51,7 +45,7 @@ function Invoke-AzureRmMigration {
         foreach ($group in $subscriptionGroups) {
             $jobs = @()
             Write-Progress -Activity 'Resizing VMs' -Status $group.Name -PercentComplete $($count / $subscriptionGroups.Count * 100)
-            Set-AzureRmContext -SubscriptionId $group.Name | Out-Null
+            Set-AzContext -SubscriptionId $group.Name | Out-Null
             foreach ($vm in $group.Group) {
                 if (($VMNameBlacklist | Where-Object { $vm.Name -match $_ }).Count -ne 0 -or ($ResourceGroupBlacklist | Where-Object { $vm.ResourceGroupName -match $_ }).Count -ne 0) { continue; }
                 elseif ($WhatIfPreference) {
@@ -72,9 +66,9 @@ function Invoke-AzureRmMigration {
                     if ($null -ne $newsku) {
                         $vm.HardwareProfile.VmSize = $newsku
                         $job = Start-ThreadJob -ScriptBlock {PARAM($vm)
-                            Stop-AzureRmVM -Name $vm.Name -ResourceGroupName $vm.ResourceGroupName -Confirm:$false -Force
-                            Update-AzureRmVm -VM $vm -ResourceGroupName $vm.ResourceGroupName -Confirm:$false
-                            Start-AzureRmVM -Name $vm.Name -ResourceGroupName $vm.ResourceGroupName -Confirm:$false
+                            Stop-AzVM -Name $vm.Name -ResourceGroupName $vm.ResourceGroupName -Confirm:$false -Force
+                            Update-AzVm -VM $vm -ResourceGroupName $vm.ResourceGroupName -Confirm:$false
+                            Start-AzVM -Name $vm.Name -ResourceGroupName $vm.ResourceGroupName -Confirm:$false
                         } -ThrottleLimit 30 -ArgumentList $vm
                         $jobs += $job
                     }
@@ -84,6 +78,6 @@ function Invoke-AzureRmMigration {
             write-output $jobs
             $count = $count + 1
         }
-        Set-AzureRmContext -Context $context | Out-Null
+        Set-AzContext -Context $context | Out-Null
     }   
 }
